@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Care Banner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="care-banner-root"></div>
+
+  <script>
+    // ============================================
+    // State Management Module
+    // ============================================
+    class StateManager {
+      constructor(initialState) {
+        this.state = initialState;
+        this.observers = [];
+      }
+
+      subscribe(observer) {
+        if (typeof observer !== 'function') {
+          throw new TypeError('Observer must be a function');
+        }
+        this.observers.push(observer);
+        return () => {
+          this.observers = this.observers.filter(obs => obs !== observer);
+        };
+      }
+
+      setState(updates) {
+        const previousState = { ...this.state };
+        this.state = { ...this.state, ...updates };
+        this.notify(previousState, this.state);
+      }
+
+      notify(previousState, newState) {
+        this.observers.forEach(observer => {
+          try {
+            observer(newState, previousState);
+          } catch (error) {
+            console.error('Error in state observer:', error);
+          }
+        });
+      }
+
+      getState() {
+        return { ...this.state };
+      }
+    }
+
+    function createInitialState(config) {
+      return {
+        activeButton: null,
+        previousButton: null,
+        images: config.images,
+        content: config.content,
+        isAnimating: false,
+        imagesPreloaded: false
+      };
+    }
+
+    // ============================================
+    // UI Rendering Module
+    // ============================================
+    function updateButtonState(button, isActive) {
+      const chevron = button.querySelector('.chevron');
+      const accordionItem = button.closest('.accordion-item');
+      
+      if (isActive) {
+        accordionItem.classList.add('ring-2', 'ring-blue-500');
+        if (chevron) {
+          chevron.style.transform = 'rotate(180deg)';
+        }
+      } else {
+        accordionItem.classList.remove('ring-2', 'ring-blue-500');
+        if (chevron) {
+          chevron.style.transform = 'rotate(0deg)';
+        }
+      }
+    }
+
+    function animateDropdown(dropdown, isOpening) {
+      if (isOpening) {
+        dropdown.style.maxHeight = '0px';
+        dropdown.classList.remove('opacity-0');
+        dropdown.setAttribute('aria-hidden', 'false');
+        
+        dropdown.offsetHeight;
+        
+        const contentHeight = dropdown.scrollHeight;
+        dropdown.style.maxHeight = `${contentHeight}px`;
+        dropdown.classList.add('opacity-100');
+      } else {
+        dropdown.style.maxHeight = `${dropdown.scrollHeight}px`;
+        
+        dropdown.offsetHeight;
+        
+        dropdown.style.maxHeight = '0px';
+        dropdown.classList.remove('opacity-100');
+        dropdown.classList.add('opacity-0');
+        dropdown.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    function switchBackgroundImage(imageUrl) {
+      const container = document.querySelector('.background-container');
+      const activeImage = container.querySelector('.background-image.active');
+      
+      const newImage = document.createElement('div');
+      newImage.className = 'background-image absolute inset-0 bg-cover bg-center transition-opacity duration-500 ease-in-out opacity-0';
+      newImage.style.backgroundImage = `url(${imageUrl})`;
+      
+      container.appendChild(newImage);
+      
+      requestAnimationFrame(() => {
+        newImage.classList.remove('opacity-0');
+        newImage.classList.add('opacity-100', 'active');
+        if (activeImage) {
+          activeImage.classList.remove('active', 'opacity-100');
+          activeImage.classList.add('opacity-0');
+        }
+      });
+      
+      setTimeout(() => {
+        if (activeImage && activeImage.parentNode) {
+          activeImage.remove();
+        }
+      }, 500);
+    }
+
+    // ============================================
+    // Event Handling Module
+    // ============================================
+    function setupButtonClickHandlers(stateManager) {
+      const buttons = document.querySelectorAll('.care-button');
+      
+      buttons.forEach(button => {
+        button.addEventListener('click', () => {
+          handleButtonClick(button, stateManager);
+        });
+      });
+    }
+
+    function handleButtonClick(button, stateManager) {
+      const careType = button.dataset.careType;
+      const currentState = stateManager.getState();
+      
+      if (currentState.isAnimating) return;
+      
+      const newActiveButton = currentState.activeButton === careType ? null : careType;
+      
+      stateManager.setState({
+        previousButton: currentState.activeButton,
+        activeButton: newActiveButton,
+        isAnimating: true
+      });
+      
+      setTimeout(() => {
+        stateManager.setState({ isAnimating: false });
+      }, 300);
+    }
+
+    function setupKeyboardNavigation(stateManager) {
+      const buttons = document.querySelectorAll('.care-button');
+      
+      buttons.forEach((button, index) => {
+        button.addEventListener('keydown', (event) => {
+          handleKeyboardEvent(event, button, buttons, index, stateManager);
+        });
+      });
+    }
+
+    function handleKeyboardEvent(event, button, buttons, index, stateManager) {
+      switch(event.key) {
+        case 'Enter':
+        case ' ':
+          event.preventDefault();
+          button.click();
+          break;
+          
+        case 'ArrowRight':
+        case 'ArrowDown':
+          event.preventDefault();
+          const nextButton = buttons[(index + 1) % buttons.length];
+          nextButton.focus();
+          break;
+          
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          event.preventDefault();
+          const prevButton = buttons[(index - 1 + buttons.length) % buttons.length];
+          prevButton.focus();
+          break;
+          
+        case 'Escape':
+          if (stateManager.getState().activeButton) {
+            stateManager.setState({ activeButton: null });
+          }
+          break;
+      }
+    }
+
+    function setupResizeHandler() {
+      const handleResize = debounce(() => {
+        recalculateDropdownHeights();
+      }, 150);
+      
+      window.addEventListener('resize', handleResize);
+    }
+
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    function recalculateDropdownHeights() {
+      const dropdowns = document.querySelectorAll('.dropdown-panel');
+      dropdowns.forEach(dropdown => {
+        if (dropdown.classList.contains('opacity-100')) {
+          dropdown.style.maxHeight = `${dropdown.scrollHeight}px`;
+        }
+      });
+    }
+
+    // ============================================
+    // Image Preloader Module
+    // ============================================
+    function preloadImages(imageUrls) {
+      return Promise.all(
+        imageUrls.map(url => {
+          return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(url);
+            img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+            img.src = url;
+          });
+        })
+      );
+    }
+
+    // ============================================
+    // Accessibility Module
+    // ============================================
+    function updateARIAAttributes(button, isExpanded) {
+      button.setAttribute('aria-expanded', isExpanded.toString());
+      
+      const dropdownId = button.getAttribute('aria-controls');
+      const dropdown = document.getElementById(dropdownId);
+      
+      if (dropdown) {
+        dropdown.setAttribute('aria-hidden', (!isExpanded).toString());
+      }
+    }
+
+    function setupAccessibility(stateManager) {
+      const buttons = document.querySelectorAll('.care-button');
+      buttons.forEach((button) => {
+        button.setAttribute('role', 'button');
+        button.setAttribute('tabindex', '0');
+        const careType = button.dataset.careType.replace(/-/g, ' ');
+        button.setAttribute('aria-label', `View ${careType} information`);
+      });
+      
+      const liveRegion = document.createElement('div');
+      liveRegion.setAttribute('aria-live', 'polite');
+      liveRegion.setAttribute('aria-atomic', 'true');
+      liveRegion.className = 'sr-only absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0';
+      liveRegion.id = 'care-banner-live-region';
+      document.body.appendChild(liveRegion);
+      
+      stateManager.subscribe((newState, previousState) => {
+        if (newState.activeButton && newState.activeButton !== previousState.activeButton) {
+          const careType = newState.activeButton.replace(/-/g, ' ');
+          liveRegion.textContent = `${careType} information panel opened`;
+        } else if (!newState.activeButton && previousState.activeButton) {
+          liveRegion.textContent = 'Information panel closed';
+        }
+      });
+    }
+
+    // ============================================
+    // Main Initialization
+    // ============================================
+    function validateConfig(config) {
+      const errors = [];
+      
+      if (!config.containerId) {
+        errors.push('containerId is required');
+      }
+      
+      if (!config.images || typeof config.images !== 'object') {
+        errors.push('images configuration is required');
+      } else {
+        const requiredImages = ['default', 'independentLiving', 'assistedLiving', 'memoryCare'];
+        requiredImages.forEach(key => {
+          if (!config.images[key]) {
+            errors.push(`images.${key} is required`);
+          }
+        });
+      }
+      
+      if (!config.content || typeof config.content !== 'object') {
+        errors.push('content configuration is required');
+      } else {
+        const requiredContent = ['independentLiving', 'assistedLiving', 'memoryCare'];
+        requiredContent.forEach(key => {
+          if (!config.content[key] || !config.content[key].title || !config.content[key].description) {
+            errors.push(`content.${key} must have title and description`);
+          }
+        });
+      }
+      
+      if (errors.length > 0) {
+        throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);
+      }
+      
+      return true;
+    }
+
+    function renderHTML(containerId, config) {
+      const container = document.getElementById(containerId);
+      if (!container) {
+        throw new Error(`Container element not found: ${containerId}`);
+      }
+      
+      container.innerHTML = `
+        <div class="care-banner-container relative min-h-screen w-full">
+          <div class="background-container fixed inset-0 -z-10">
+            <div class="background-image active absolute inset-0 bg-cover bg-center transition-opacity duration-500 ease-in-out opacity-100" style="background-image: url(${config.images.default})"></div>
+          </div>
+          <div class="content-wrapper relative z-10 px-4 py-16 max-w-2xl" style="padding-left: 10.25rem;">
+            <div class="accordion-container flex flex-col pl-9 gap-3">
+              
+              <!-- Independent Living Item -->
+              <div class="accordion-item bg-white rounded-xl shadow-md overflow-hidden">
+                <button id="button-independent-living" class="care-button w-full px-5 py-4 text-left text-lg font-medium transition-all duration-300 ease-out text-gray-800 hover:bg-gray-50 focus:outline-none flex items-center justify-between" data-care-type="independent-living" aria-expanded="false" aria-controls="dropdown-independent-living">
+                  <span class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                    </svg>
+                    Independent Living
+                  </span>
+                  <svg class="chevron w-5 h-5 text-gray-600 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </button>
+                <div id="dropdown-independent-living" class="dropdown-panel overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0" role="region" aria-labelledby="button-independent-living" aria-hidden="true">
+                  <div class="dropdown-content px-5 py-4 bg-gray-50 border-t border-gray-100">
+                    <p class="text-sm leading-relaxed text-gray-700">${config.content.independentLiving.description}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Assisted Living Item -->
+              <div class="accordion-item bg-white rounded-xl shadow-md overflow-hidden">
+                <button id="button-assisted-living" class="care-button w-full px-5 py-4 text-left text-lg font-medium transition-all duration-300 ease-out text-gray-800 hover:bg-gray-50 focus:outline-none flex items-center justify-between" data-care-type="assisted-living" aria-expanded="false" aria-controls="dropdown-assisted-living">
+                  <span class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                    Assisted Living
+                  </span>
+                  <svg class="chevron w-5 h-5 text-gray-600 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </button>
+                <div id="dropdown-assisted-living" class="dropdown-panel overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0" role="region" aria-labelledby="button-assisted-living" aria-hidden="true">
+                  <div class="dropdown-content px-5 py-4 bg-gray-50 border-t border-gray-100">
+                    <p class="text-sm leading-relaxed text-gray-700">${config.content.assistedLiving.description}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Memory Care Item -->
+              <div class="accordion-item bg-white rounded-xl shadow-md overflow-hidden">
+                <button id="button-memory-care" class="care-button w-full px-5 py-4 text-left text-lg font-medium transition-all duration-300 ease-out text-gray-800 hover:bg-gray-50 focus:outline-none flex items-center justify-between" data-care-type="memory-care" aria-expanded="false" aria-controls="dropdown-memory-care">
+                  <span class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+                    </svg>
+                    Memory Care
+                  </span>
+                  <svg class="chevron w-5 h-5 text-gray-600 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </button>
+                <div id="dropdown-memory-care" class="dropdown-panel overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0" role="region" aria-labelledby="button-memory-care" aria-hidden="true">
+                  <div class="dropdown-content px-5 py-4 bg-gray-50 border-t border-gray-100">
+                    <p class="text-sm leading-relaxed text-gray-700">${config.content.memoryCare.description}</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function initCareBanner(config) {
+      try {
+        validateConfig(config);
+        
+        renderHTML(config.containerId, config);
+        
+        const initialState = createInitialState(config);
+        const stateManager = new StateManager(initialState);
+        
+        if (config.preloadImages !== false) {
+          const imageUrls = Object.values(config.images);
+          try {
+            await preloadImages(imageUrls);
+            stateManager.setState({ imagesPreloaded: true });
+            console.log('All images preloaded successfully');
+          } catch (error) {
+            console.error('Image preloading failed:', error);
+          }
+        }
+        
+        stateManager.subscribe((newState, previousState) => {
+          const buttons = document.querySelectorAll('.care-button');
+          buttons.forEach(button => {
+            const careType = button.dataset.careType;
+            const isActive = newState.activeButton === careType;
+            updateButtonState(button, isActive);
+            updateARIAAttributes(button, isActive);
+            
+            const dropdown = document.getElementById(`dropdown-${careType}`);
+            if (dropdown) {
+              if (isActive && previousState.activeButton !== careType) {
+                animateDropdown(dropdown, true);
+              } else if (!isActive && previousState.activeButton === careType) {
+                animateDropdown(dropdown, false);
+              }
+            }
+          });
+          
+          if (newState.activeButton && newState.activeButton !== previousState.activeButton) {
+            const careTypeKey = newState.activeButton.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
+            const imageUrl = newState.images[careTypeKey];
+            if (imageUrl) {
+              switchBackgroundImage(imageUrl);
+            }
+          } else if (!newState.activeButton && previousState.activeButton) {
+            switchBackgroundImage(newState.images.default);
+          }
+        });
+        
+        setupButtonClickHandlers(stateManager);
+        
+        if (config.enableKeyboard !== false) {
+          setupKeyboardNavigation(stateManager);
+        }
+        
+        setupResizeHandler();
+        setupAccessibility(stateManager);
+        
+        return {
+          getState: () => stateManager.getState(),
+          destroy: () => {
+            const liveRegion = document.getElementById('care-banner-live-region');
+            if (liveRegion) {
+              liveRegion.remove();
+            }
+          }
+        };
+      } catch (error) {
+        console.error('Failed to initialize Care Banner:', error);
+        throw error;
+      }
+    }
+
+    // ============================================
+    // Configuration & Initialization
+    // ============================================
+    const sampleConfig = {
+      containerId: 'care-banner-root',
+      images: {
+        default: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=1920&q=80',
+        independentLiving: 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=1920&q=80',
+        assistedLiving: 'https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?w=1920&q=80',
+        memoryCare: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=1920&q=80'
+      },
+      content: {
+        independentLiving: {
+          title: 'Independent Living',
+          description: 'Enjoy an active, maintenance-free lifestyle with the freedom to come and go as you please. Our independent living communities offer resort-style amenities, engaging activities, and a vibrant social atmosphere.'
+        },
+        assistedLiving: {
+          title: 'Assisted Living',
+          description: 'Receive personalized care and support with daily activities while maintaining your independence. Our compassionate team is available 24/7 to provide assistance tailored to your unique needs.'
+        },
+        memoryCare: {
+          title: 'Memory Care',
+          description: 'Experience specialized care in a secure, nurturing environment designed for individuals with Alzheimer\'s and dementia. Our trained staff provides compassionate support and engaging programs to enhance quality of life.'
+        }
+      }
+    };
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        initCareBanner(sampleConfig);
+      });
+    } else {
+      initCareBanner(sampleConfig);
+    }
+  </script>
+</body>
+</html>
